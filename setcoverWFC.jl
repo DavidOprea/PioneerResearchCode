@@ -7,11 +7,13 @@ using StatsBase                     # for sample
 using Combinatorics                 # for combinations
 using Colors                        # to access RGB colors
 using DataStructures
+using Random
 
 mutable struct MySet
     nums::Vector{Int}
     cons::Int
     entropy::Int
+    key::Int
 end
 
 ans = Vector{MySet}()
@@ -79,12 +81,24 @@ function get_filename()
     # return "s1.txt" # use this for debugging
 end
 
+function makeLookup()
+    global lookup
+    global sets
+    for s in sets
+        for num in s.nums
+            push!(lookup[num], s)
+        end
+    end
+end
+
 "Creates an array of MySet structs as a way of representing the given universe."
 
 function create_set_vector(set)
     sets = Vector{MySet}()
+    i = 1
     for s in set
-        new_set = MySet(s, 0, length(s))
+        new_set = MySet(s, 0, length(s), i)
+        i += 1
         for num in s
             push!(lookup[num], new_set)
         end
@@ -113,6 +127,9 @@ function collapse(set)
         for other in lookup[num]
             other.cons -= length(lookup[num])
             other.entropy -= 1
+            if other.entropy == 0
+                filter!(x -> !isequal(x, other), sets)
+            end
         end
         lookup[num] = []
     end
@@ -144,10 +161,84 @@ function WFC(sets)
             collapse(value[1])
         end
     end
-    sort!(sets, by = x -> x.entropy, rev = true)
+    sort!(sets, by = x -> x.entropy)
     while !isempty(sets)
         bad = observe()
         propagate(bad)
+        # @show ans
+    end
+    return ans
+end
+
+function fixGene(gene)
+    for i in 1:length(gene)
+        gene[i] = (gene[i] <= 0) ? 0 : 1
+    end
+    return gene
+end
+
+function tryAll(s, num_sets, range)
+    global ans
+    global sets
+    best_ans = zeros(num_sets+1)
+    for i in 1:num_sets
+        set = s[i]
+        ans = []
+        sets = deepcopy(s)
+        makeLookup()
+        collapse(set)
+        ans = WFC(sets)
+        if length(ans) < length(best_ans)
+            best_ans = ans
+        end
+    end
+    return best_ans
+end
+
+function DiffEvol(s, population_size, num_sets, range, steps)
+    global ans
+    global sets
+    population = []
+    for _ in 1:population_size
+        idx = rand(1:num_sets)
+        randSet = s[idx]
+        ans = []
+        sets = deepcopy(s)
+        makeLookup()
+        collapse(randSet)
+        ans = WFC(sets)
+        gene = zeros(num_sets)
+        for set in ans
+            gene[set.key] = 1
+        end
+        push!(population, gene)
+    end
+    # @show population
+    sort!(s, by = x -> x.key)
+    for _ in 1:steps
+        x, a, b, c = shuffle(collect(1:population_size))[1:4]
+        new_gene = fixGene(population[a] + population[b] - population[c])
+        ans = []
+        for i in 1:num_sets
+            if new_gene[i] == 1
+                push!(ans, s[i])
+            end
+        end
+        if length(ans) <= sum(population[x]) && check(range, ans)
+            population[x] = new_gene
+        end
+    end
+    best_gene = population[1]
+    for gene in population
+        if sum(gene) < sum(best_gene)
+            best_gene = gene
+        end
+    end
+    ans = []
+    for i in 1:num_sets
+        if best_gene[i] == 1
+            push!(ans, s[i])
+        end
     end
     return ans
 end
@@ -169,6 +260,7 @@ function seeIfBest(range, sets, r)
         if check(range, comb)
             @show length(comb)
             @show comb
+            @show check(range, comb)
             return false
         end
     end
@@ -180,8 +272,9 @@ num_sets is the number of sets in the universe
 range is the range of numbers that will appear from 1:range
 lower is the lower bound for how many of each number will appear in the sets
 higher is the higher bound for how many of each number will appear in the sets"
-function main(num_sets = 100, range = 100, lower = 10, higher = 20, filename = "s7.txt")
+function main(num_sets = 30, range = 30, lower = 10, higher = 10, filename = "s1.txt")
     global sets
+    global ans
     set = setup(num_sets, range, lower, higher, filename)
     sets = create_set_vector(set)
     orig_sets = deepcopy(sets)
@@ -193,7 +286,13 @@ function main(num_sets = 100, range = 100, lower = 10, higher = 20, filename = "
     @show length(vals)
     @show vals
     @show check(range, ans)
-    @show seeIfBest(range, orig_sets, length(vals)-1)
+
+    DiffEvol(orig_sets, 15, num_sets, range, 1000)
+    @show length(ans)
+    ans = tryAll(orig_sets, num_sets, range)
+    @show length(ans)
+    @show ans
+    @show seeIfBest(range, orig_sets, length(ans)-1)
     # report(graph, edges, nodes, "WFC")
 end
 
